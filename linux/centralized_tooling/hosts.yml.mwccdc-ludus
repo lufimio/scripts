@@ -1,0 +1,25 @@
+# for MWCCDC network on Ludus
+
+web01:
+  ip: "10.4.10.30"
+  user: "sysadmin"
+  pass: "Changeme1!"
+  os: "lin"
+
+mail01:
+  ip: "10.4.10.40"
+  user: "sysadmin"
+  pass: "Changeme1!"
+  os: "lin"
+
+splunk01:
+  ip: "10.4.10.50"
+  user: "sysadmin"
+  pass: "Changeme1!"
+  os: "lin"
+
+ubuntu01:
+  ip: "10.4.10.60"
+  user: "sysadmin"
+  pass: "Changeme1!"
+  os: "lin"
