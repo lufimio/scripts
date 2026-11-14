@@ -36,10 +36,10 @@ if command -v apt-get &> /dev/null; then
     apt-get install auditd audispd-plugins -y
     
 elif command -v dnf &> /dev/null; then
-    dnf install auditd audispd-plugins -y
-    
+    dnf install audit audispd-plugins -y
+
 elif command -v yum &> /dev/null; then
-    yum install auditd audispd-plugins -y
+    yum install audit audispd-plugins -y
     
 else
     echo "❌ Unsupported package manager. Please install auditd manually."
@@ -95,10 +95,11 @@ if [ "$AUDIT_ENABLED" = "2" ]; then
     echo "    Rules have been placed in $DEST_RULES_FILE and will load on next reboot."
     echo "    Reboot required for changes to take effect."
 else
-    if ! augenrules --load; then
+    augenrules_out=$(augenrules --load 2>&1) || {
         echo "❌ FAILED to load audit rules. There is likely a syntax error in your '$RULES_FILE'."
+        echo "$augenrules_out"
         exit 1
-    fi
+    }
     echo "✅ Rules loaded into the kernel successfully."
 fi
 

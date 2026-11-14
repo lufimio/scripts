@@ -7,8 +7,8 @@ umask 077
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 WORKER="$ROOT/users.sh"
-CFK_PATH="$ROOT/../../../centralized_tooling/cfk/cfk.sh"
-INVENTORY="${CCDC_HOSTS:-$ROOT../../../centralized_tooling/cfk/hosts.yml}"
+CFK_PATH="$ROOT/../centralized_tooling/cfk.sh"
+INVENTORY="${CCDC_HOSTS:-$ROOT/../centralized_tooling/hosts.yml}"
 STATE=''
 PASSWORD=''
 SUCCEEDED=0
@@ -188,8 +188,8 @@ json_to_inventory() {
 track_source_inventory() {
   SOURCE_INVENTORY=$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$1") || return 1
   [[ "$SOURCE_INVENTORY" != *$'\n'* && "$SOURCE_INVENTORY" != *$'\r'* ]] || return 1
-  [[ -f "$SOURCE_INVENTORY" && ! -L "$SOURCE_INVENTORY" && -O "$SOURCE_INVENTORY" && -w "$SOURCE_INVENTORY" ]] || {
-    printf 'Source inventory must be a writable regular file owned by you, not a symlink.\n' >&2
+  [[ -f "$SOURCE_INVENTORY" && ! -L "$SOURCE_INVENTORY" && -w "$SOURCE_INVENTORY" ]] || {
+    printf 'Source inventory must be a writable regular file, not a symlink.\n' >&2
     return 1
   }
   printf '%s\n' "$SOURCE_INVENTORY" >"$STATE/source-inventory-path" || return 1
@@ -199,7 +199,7 @@ track_source_inventory() {
 
 backup_source_inventory() {
   local backup
-  [[ -f "$SOURCE_INVENTORY" && ! -L "$SOURCE_INVENTORY" && -O "$SOURCE_INVENTORY" && -w "$SOURCE_INVENTORY" ]] || return 1
+  [[ -f "$SOURCE_INVENTORY" && ! -L "$SOURCE_INVENTORY" && -w "$SOURCE_INVENTORY" ]] || return 1
   python3 - "$SOURCE_INVENTORY" "$STATE/source-inventory.expected" <<'PY' || return 1
 import pathlib
 import sys
@@ -260,7 +260,7 @@ try:
         out.write(data)
         out.flush()
         os.fsync(out.fileno())
-    if source.is_symlink() or source.stat().st_uid != os.geteuid() or source.read_bytes() != snapshot:
+    if source.is_symlink() or source.read_bytes() != snapshot:
         raise SystemExit("Source inventory changed unexpectedly; update refused")
     os.chmod(candidate, 0o600)
     with candidate.open("rb+") as out:

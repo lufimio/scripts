@@ -5,7 +5,7 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-INVENTORY="${CCDC_HOSTS:-$ROOT/hosts.yml}"
+INVENTORY="${CCDC_HOSTS:-$ROOT/../centralized_tooling/hosts.yml}"
 
 for tool in yq jq sshpass scp ssh; do
     command -v "$tool" >/dev/null 2>&1 || { echo "Missing dependency: $tool" >&2; exit 1; }
@@ -40,8 +40,9 @@ for h in "${hosts[@]}"; do
     echo "=== $h ($user@$ip:$port) ==="
 
     ssh_opts=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -p "$port")
+    scp_opts=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -P "$port")
 
-    if ! SSHPASS="$pass" sshpass -e scp "${ssh_opts[@]}" \
+    if ! SSHPASS="$pass" sshpass -e scp "${scp_opts[@]}" \
             "$ROOT/auditdSetup.sh" "$ROOT/audit.rules" "$user@$ip:/tmp/"; then
         echo "FAILED (scp): $h" >&2
         failures=$((failures + 1))
