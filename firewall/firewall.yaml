@@ -1,0 +1,18 @@
+edge:
+  type: vyos
+  interfaces:
+    ####:
+      generic_name: wan
+      ip_addr: 172.31.29.2
+      interface_range: 172.31.29.0/29
+      down_range: []
+    ####:
+      generic_name: lan
+      ip_addr: 172.16.0.254
+      interface_range: 172.16.0.0/24
+      down_range: [172.20.240.0/24]
+    ####:
+      generic_name: lan
+      ip_addr: 172.17.0.1
+      interface_range: 172.17.0.0/24
+      down_range: [172.17.0.0/24]

@@ -1,0 +1,23 @@
+ad:
+  ip: 172.20.240.100
+  generic: ad
+  os: linux
+  username: ubuntu
+  password: ubuntu
+  ports:
+    "53/tcp": dns
+    "53/udp": dns
+    "22/tcp": ssh
+    "5985/tcp": winrm
+    "5986/tcp": winrm
+
+mssql:
+  ip: 172.20.240.120
+  generic: db
+  os: windows
+  username: ubuntu
+  password: ubuntu
+  ports:
+    "1433/tcp": mssql
+    "1434/tcp": mssql
+    "1434/udp": mssql
