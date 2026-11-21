@@ -1,0 +1,13 @@
+edge:
+  type: openwrt
+  interfaces:
+    ###:
+      generic_name: wan
+      ip_addr: 10.100.24.2/24
+      interface_range: 172.31.29.0/29
+      down_range: []
+    ###:
+      generic_name: lan
+      ip_addr: 192.168.220.2/24
+      interface_range: 172.16.0.0/24
+      down_range: [172.20.240.0/24]
