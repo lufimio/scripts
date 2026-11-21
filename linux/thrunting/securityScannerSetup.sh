@@ -124,6 +124,9 @@ install_pkg() {
                 yum install -y "$pkg" 2>/dev/null || dnf install -y "$pkg" 2>/dev/null
             }
             ;;
+        alpine)
+            apk info "$pkg" &>/dev/null || apk add --no-cache "$pkg" 2>/dev/null
+            ;;
     esac
 }
 
@@ -167,6 +170,9 @@ if [[ "$MODE" == "scan" ]]; then
             ol|rhel|centos|rocky|almalinux|oracle)
                 rpm -q epel-release &>/dev/null || yum install -y epel-release
                 yum install -y clamav clamd clamav-update 2>/dev/null
+                ;;
+            alpine)
+                apk add --no-cache clamav clamav-daemon 2>/dev/null
                 ;;
         esac
     fi
@@ -319,7 +325,18 @@ echo "========================================"
 echo ""
 
 # Detect distro for package management
-if [ -f /etc/debian_version ]; then
+if [ -f /etc/alpine-release ]; then
+    PKG_DISTRO="alpine"
+    PACKAGE_MANAGER="apk"
+    FRESHCLAM_SERVICE="clamav"
+    CLAMAV_DAEMON_SERVICE="clamd"
+    if [[ "$MODE" == "realtime" ]]; then
+        INSTALL_PACKAGES="clamav clamav-daemon inotify-tools"
+    else
+        INSTALL_PACKAGES="clamav inotify-tools"
+    fi
+    log "Alpine Linux detected"
+elif [ -f /etc/debian_version ]; then
     PKG_DISTRO="debian"
     PACKAGE_MANAGER="apt-get"
     FRESHCLAM_SERVICE="clamav-freshclam"
@@ -376,7 +393,40 @@ echo ""
 # Install ClamAV
 log "Installing ClamAV and dependencies..."
 
-if [ "$PKG_DISTRO" == "redhat" ]; then
+svc_enable_now() {
+    local svc="$1"
+    if command -v rc-update &>/dev/null; then
+        rc-update add "$svc" default 2>/dev/null || true
+        rc-service "$svc" start 2>/dev/null || true
+    else
+        systemctl enable --now "$svc"
+    fi
+}
+
+svc_stop() {
+    local svc="$1"
+    if command -v rc-service &>/dev/null; then
+        rc-service "$svc" stop 2>/dev/null || true
+    else
+        systemctl stop "$svc" 2>/dev/null || true
+    fi
+}
+
+if [ "$PKG_DISTRO" == "alpine" ]; then
+    $PACKAGE_MANAGER add --no-cache $INSTALL_PACKAGES
+
+    # Alpine ClamAV config is at /etc/clamav/
+    sed -i 's/^Example/#Example/' /etc/clamav/freshclam.conf 2>/dev/null || true
+    [[ "$MODE" == "realtime" ]] && sed -i 's/^Example/#Example/' /etc/clamav/clamd.conf 2>/dev/null || true
+
+    svc_stop "$FRESHCLAM_SERVICE"
+    log "Downloading virus definitions..."
+    freshclam || warn "freshclam update failed (rate limiting). Continuing..."
+
+    svc_enable_now "$FRESHCLAM_SERVICE"
+    [[ "$MODE" == "realtime" ]] && svc_enable_now "$CLAMAV_DAEMON_SERVICE"
+
+elif [ "$PKG_DISTRO" == "redhat" ]; then
     $PACKAGE_MANAGER install -y $EPEL_PACKAGE
     $PACKAGE_MANAGER update -y
     $PACKAGE_MANAGER install -y $INSTALL_PACKAGES
@@ -384,12 +434,12 @@ if [ "$PKG_DISTRO" == "redhat" ]; then
     sed -i 's/^Example/#Example/' /etc/freshclam.conf 2>/dev/null || true
     [[ "$MODE" == "realtime" ]] && sed -i 's/^Example/#Example/' /etc/clamd.d/scan.conf 2>/dev/null || true
 
-    systemctl stop "$FRESHCLAM_SERVICE" 2>/dev/null || true
+    svc_stop "$FRESHCLAM_SERVICE"
     log "Downloading virus definitions..."
     freshclam || warn "freshclam update failed (rate limiting). Continuing..."
 
-    systemctl enable --now "$FRESHCLAM_SERVICE"
-    [[ "$MODE" == "realtime" ]] && systemctl enable --now "$CLAMAV_DAEMON_SERVICE"
+    svc_enable_now "$FRESHCLAM_SERVICE"
+    [[ "$MODE" == "realtime" ]] && svc_enable_now "$CLAMAV_DAEMON_SERVICE"
 
 elif [ "$PKG_DISTRO" == "debian" ]; then
     $PACKAGE_MANAGER update -y
@@ -401,12 +451,12 @@ elif [ "$PKG_DISTRO" == "debian" ]; then
         sed -i 's~^#LocalSocket /var/run/clamav/clamd.sock~LocalSocket /var/run/clamav/clamd.sock~' /etc/clamav/clamd.conf 2>/dev/null || true
     fi
 
-    systemctl stop "$FRESHCLAM_SERVICE" 2>/dev/null || true
+    svc_stop "$FRESHCLAM_SERVICE"
     log "Downloading virus definitions..."
     freshclam || warn "freshclam update failed (rate limiting). Continuing..."
 
-    systemctl enable --now "$FRESHCLAM_SERVICE"
-    [[ "$MODE" == "realtime" ]] && systemctl enable --now "$CLAMAV_DAEMON_SERVICE"
+    svc_enable_now "$FRESHCLAM_SERVICE"
+    [[ "$MODE" == "realtime" ]] && svc_enable_now "$CLAMAV_DAEMON_SERVICE"
 fi
 
 [[ "$MODE" == "realtime" ]] && sleep 5

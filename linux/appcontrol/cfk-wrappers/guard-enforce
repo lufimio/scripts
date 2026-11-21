@@ -1,0 +1,2 @@
+#!/bin/bash
+ccdc-guard enforce "$@"

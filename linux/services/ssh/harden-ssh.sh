@@ -10,8 +10,8 @@
 # WHAT STOPS WORKING: public key logins, root login and all forwarding.
 # Password logins stay on, and so do the port, listen address and host keys.
 # Drop-ins in sshd_config.d are left on disk but are no longer read (no Include).
-# The old file is copied to /root/ccdc-ssh-backup.<time>/ and the undo command
-# is printed at the end.
+# The old config and banner are backed up to /root/ccdc-ssh-backup.<time>/.
+# An undo script is printed at the end.
 # Not root: shows what it would set, changes nothing.
 #
 # Asks: "Rewrite <config> ...? (y/N)". --apply answers yes.
@@ -26,7 +26,10 @@ export LC_ALL
 WARNS=0
 info() { printf '[ ] %s\n' "$*"; }
 ok() { printf '[+] %s\n' "$*"; }
-warn() { printf '[!] %s\n' "$*"; WARNS=$((WARNS + 1)); }
+warn() {
+  printf '[!] %s\n' "$*"
+  WARNS=$((WARNS + 1))
+}
 
 APPLY=0
 [ "$1" = "--apply" ] && APPLY=1
@@ -64,10 +67,18 @@ PermitTunnel no
 PermitUserEnvironment no
 PermitUserRC no
 StrictModes yes
+Banner /etc/ssh/sshd_banner
 MaxAuthTries 4
 LoginGraceTime 30
 LogLevel VERBOSE
 Subsystem sftp internal-sftp"
+
+BANNER="/etc/ssh/sshd_banner"
+SSH_BANNER_TEXT="Legal Notice
+
+This device is the property of our company. By continuing to use this device, you acknowledge and consent to the following:
+
+This device is only to be used for authorized use by authorized users. You consent to the unrestricted monitoring, interception, recording, and searching of all communications and data transiting, travelling to or from, or stored on this system by our company or by any person or entity authorized by our company at any time or for any purpose. You consent, without restriction, to all communications and data transiting, travelling to or from, or stored on this system being disclosed by our company or by any person or entity authorized by our company to any entity, including the government, at any time or for any purpose. You acknowledge without exception that you have no reasonable expectation of privacy regarding your use of this system including for work-related use or any personal use. These acknowledgements and consents cover all uses of the system including work-related and personal use without exception."
 
 WORK="$(mktemp -d 2>/dev/null)" || {
   WORK="/tmp/ccdc-harden-ssh.$$"
@@ -163,6 +174,8 @@ fi
 if [ "$IS_ROOT" = 0 ]; then
   info "Would set:"
   printf '%s\n' "$OPTIONS" | sed 's/^/      /'
+  info "Would install $BANNER (root:root, mode 0644; immutable when supported)"
+  info "Would make $CONFIG immutable when supported"
   echo "SUMMARY: server=$SSHD changed=0 (dry run) warnings=$WARNS"
   exit 0
 fi
@@ -205,8 +218,12 @@ if ! "$SSHD" -t -f "$WORK/candidate" 2>"$WORK/err"; then
   exit 1
 fi
 ok "New config passes sshd -t"
+if ! grep -Fqx 'Banner /etc/ssh/sshd_banner' "$WORK/ours"; then
+  warn "sshd did not accept the Banner directive; nothing changed"
+  exit 1
+fi
 
-if ! confirm "Rewrite $CONFIG: key logins and root login OFF, password logins stay ON?"; then
+if ! confirm "Rewrite $CONFIG and install $BANNER: key/root logins OFF, password logins ON?"; then
   info "Nothing changed"
   echo "SUMMARY: server=$SSHD changed=0 warnings=$WARNS"
   exit 0
@@ -216,12 +233,118 @@ fi
 echo
 echo "== Install =="
 
-BACKUP="/root/ccdc-ssh-backup.$(date '+%Y%m%d-%H%M%S')"
+# Immutability is optional. Always set root ownership and mode 0644.
+# Try chattr only when it is available and supported by this filesystem.
+IMMUTABLE_SUPPORTED=0
+if command -v chattr >/dev/null 2>&1; then
+  CHECK="$(mktemp /etc/ssh/.sshd-banner-check.XXXXXX)" || exit 1
+  if chattr +i "$CHECK" 2>"$WORK/err"; then
+    if chattr -i "$CHECK" && rm -f "$CHECK"; then
+      IMMUTABLE_SUPPORTED=1
+    else
+      warn "Unable to clear immutable flag on $CHECK; clean up manually"
+      exit 1
+    fi
+  else
+    warn "chattr +i unavailable on /etc/ssh; proceeding without immutability"
+    rm -f "$CHECK"
+  fi
+else
+  info "chattr not installed; proceeding without immutability"
+fi
+if [ -L "$CONFIG" ]; then
+  warn "$CONFIG is a symlink; refusing to change its target's immutability"
+  exit 1
+fi
+if [ -L "$BANNER" ] || { [ -e "$BANNER" ] && [ ! -f "$BANNER" ]; }; then
+  warn "$BANNER is not a regular file (or is a symlink); nothing changed"
+  exit 1
+fi
+
+BACKUP="/root/ccdc-ssh-backup.$(date '+%Y%m%d-%H%M%S').$$"
 if ! mkdir -m 700 "$BACKUP" 2>/dev/null || ! cp -p "$CONFIG" "$BACKUP/sshd_config"; then
   warn "Could not back up to $BACKUP, refusing to change anything"
   exit 1
 fi
-ok "Backup: $BACKUP/sshd_config"
+BANNER_EXISTED=0
+BANNER_IMMUTABLE=0
+if [ -e "$BANNER" ]; then
+  BANNER_EXISTED=1
+  if ! cp -p "$BANNER" "$BACKUP/sshd_banner"; then
+    warn "Could not back up $BANNER, refusing to change anything"
+    exit 1
+  fi
+  if command -v lsattr >/dev/null 2>&1; then
+    attributes="$(lsattr -d "$BANNER" 2>/dev/null)" || attributes=""
+    case "${attributes%% *}" in *i*) BANNER_IMMUTABLE=1 ;; esac
+  fi
+  if [ "$BANNER_IMMUTABLE" = 1 ] && [ "$IMMUTABLE_SUPPORTED" = 0 ]; then
+    warn "Existing banner is immutable but cannot safely clear/reapply its flag; nothing changed"
+    exit 1
+  fi
+fi
+# Capture existing immutable state so a rerun can update an already-protected
+# config and rollback/undo can restore the original state.
+CONFIG_IMMUTABLE=0
+if command -v lsattr >/dev/null 2>&1; then
+  attributes="$(lsattr -d "$CONFIG" 2>/dev/null)" || attributes=""
+  case "${attributes%% *}" in *i*) CONFIG_IMMUTABLE=1 ;; esac
+fi
+if [ "$CONFIG_IMMUTABLE" = 1 ] && [ "$IMMUTABLE_SUPPORTED" = 0 ]; then
+  warn "Existing config is immutable but cannot safely clear/reapply its flag; nothing changed"
+  exit 1
+fi
+ok "Backup: $BACKUP"
+
+# Restore the banner's original contents and immutable state if anything fails.
+restore_banner() {
+  if command -v chattr >/dev/null 2>&1; then chattr -i "$BANNER" 2>/dev/null || :; fi
+  if [ "$BANNER_EXISTED" = 1 ]; then
+    if ! cp -p "$BACKUP/sshd_banner" "$BANNER"; then
+      warn "Failed restoring banner from $BACKUP/sshd_banner"
+      return 1
+    fi
+    if [ "$BANNER_IMMUTABLE" = 1 ]; then
+      chattr +i "$BANNER" || return 1
+    fi
+  else
+    rm -f "$BANNER" || return 1
+  fi
+}
+
+# Copy the banner while temporarily clearing the old immutable bit if needed.
+# Mode 0644 allows only root to write once immutable is cleared.
+if [ "$BANNER_IMMUTABLE" = 1 ] && ! chattr -i "$BANNER"; then
+  warn "Cannot clear old banner's immutable bit; nothing changed"
+  exit 1
+fi
+umask 077
+if ! printf '%s\n' "$SSH_BANNER_TEXT" >"$BANNER" ||
+  ! chown 0:0 "$BANNER" ||
+  ! chmod 0644 "$BANNER"; then
+  warn "Could not install banner; restoring previous banner"
+  restore_banner || warn "Banner rollback failed; manual recovery required"
+  exit 1
+fi
+# Apply immutable flag when supported; failure is nonfatal.
+BANNER_IMMUTABLE_NEW=0
+if [ "$IMMUTABLE_SUPPORTED" = 1 ]; then
+  if chattr +i "$BANNER"; then
+    BANNER_IMMUTABLE_NEW=1
+  else
+    warn "Could not mark $BANNER immutable; continuing with root-only write permissions"
+  fi
+fi
+if [ "$(stat -c '%u:%g:%a' "$BANNER" 2>/dev/null)" != '0:0:644' ]; then
+  warn "Banner ownership or permissions incorrect; restoring banner"
+  restore_banner || warn "Banner rollback failed"
+  exit 1
+fi
+if [ "$BANNER_IMMUTABLE_NEW" = 1 ]; then
+  ok "Installed immutable banner: $BANNER (root:root, 0644, chattr +i)"
+else
+  ok "Installed banner: $BANNER (root:root, 0644; immutability skipped)"
+fi
 
 # Which systemd unit runs sshd: ssh on Debian/Ubuntu, sshd elsewhere.
 UNIT=""
@@ -243,19 +366,60 @@ reload() {
   fi
 }
 
-UNDO="cp -p $BACKUP/sshd_config $CONFIG"
-if [ -n "$UNIT" ]; then
-  UNDO="$UNDO && systemctl reload $UNIT"
-elif [ -z "$SOCKET" ] && [ -n "$PID" ]; then
-  UNDO="$UNDO && kill -HUP $PID"
+# Persist a complete undo script (config + previous banner and its attributes).
+# This is intentionally a separate root-only file, so recovery is one command.
+cat >"$BACKUP/undo.sh" <<EOF
+#!/bin/sh
+set -e
+command -v chattr >/dev/null 2>&1 && chattr -i '$BANNER' 2>/dev/null || :
+EOF
+if [ "$BANNER_EXISTED" = 1 ]; then
+  printf "cp -p '%s/sshd_banner' '%s'\n" "$BACKUP" "$BANNER" >>"$BACKUP/undo.sh"
+  if [ "$BANNER_IMMUTABLE" = 1 ]; then
+    printf "chattr +i '%s'\n" "$BANNER" >>"$BACKUP/undo.sh"
+  fi
+else
+  printf "rm -f '%s'\n" "$BANNER" >>"$BACKUP/undo.sh"
 fi
+cat >>"$BACKUP/undo.sh" <<EOF
+command -v chattr >/dev/null 2>&1 && chattr -i '$CONFIG' 2>/dev/null || :
+EOF
+printf "cp -p '%s/sshd_config' '%s'\n" "$BACKUP" "$CONFIG" >>"$BACKUP/undo.sh"
+if [ "$CONFIG_IMMUTABLE" = 1 ]; then
+  printf "chattr +i '%s'\n" "$CONFIG" >>"$BACKUP/undo.sh"
+fi
+if [ -n "$UNIT" ]; then
+  printf "systemctl reload '%s'\n" "$UNIT" >>"$BACKUP/undo.sh"
+elif [ -z "$SOCKET" ] && [ -n "$PID" ]; then
+  printf "kill -HUP '%s'\n" "$PID" >>"$BACKUP/undo.sh"
+fi
+chmod 0700 "$BACKUP/undo.sh"
+UNDO="sh $BACKUP/undo.sh"
 
 restore() {
-  cp -p "$BACKUP/sshd_config" "$CONFIG"
-  reload
-  warn "Restored $CONFIG from the backup"
+  # An immutable config must be unlocked before copying its backup.
+  if command -v chattr >/dev/null 2>&1; then
+    chattr -i "$CONFIG" 2>/dev/null || :
+  fi
+  if ! cp -p "$BACKUP/sshd_config" "$CONFIG"; then
+    warn "Failed restoring config from $BACKUP/sshd_config"
+  fi
+  if [ "$CONFIG_IMMUTABLE" = 1 ] && ! chattr +i "$CONFIG"; then
+    warn "Failed restoring original config immutable attribute"
+  fi
+  if ! restore_banner; then
+    warn "Failed restoring banner; manual recovery required"
+  fi
+  reload || warn "Reload of restored config failed"
+  warn "Restored config and banner from $BACKUP"
 }
 
+# Temporarily unlock an existing protected config for the validated rewrite.
+if [ "$CONFIG_IMMUTABLE" = 1 ] && ! chattr -i "$CONFIG"; then
+  warn "Cannot clear existing config immutable bit; restoring banner"
+  restore_banner || warn "Banner rollback failed"
+  exit 1
+fi
 # cp onto the existing file keeps its owner, mode and SELinux label.
 if ! cp "$WORK/candidate" "$CONFIG" || ! "$SSHD" -t -f "$CONFIG" 2>"$WORK/err"; then
   warn "Installing $CONFIG failed:"
@@ -316,7 +480,25 @@ else
   warn "sshd -T failed after the install, check by hand"
 fi
 
+# Protect sshd_config only after validation and successful daemon reload.
+# Failure to apply immutability is nonfatal, just as for the banner.
+if [ "$IMMUTABLE_SUPPORTED" = 1 ]; then
+  if chattr +i "$CONFIG"; then
+    ok "Protected config: $CONFIG (chattr +i)"
+  else
+    warn "Could not mark $CONFIG immutable; continuing with its existing permissions"
+  fi
+else
+  info "Config immutability skipped: $CONFIG"
+fi
+
 echo
+if command -v lsattr >/dev/null 2>&1; then
+  info "Config attributes: $(lsattr -d "$CONFIG" 2>/dev/null || echo unavailable)"
+  info "Banner attributes: $(lsattr -d "$BANNER" 2>/dev/null || echo unavailable)"
+else
+  info "Banner installed (lsattr unavailable)"
+fi
 info "Test a password login now from this console:  ssh USER@127.0.0.1"
 info "Undo:  $UNDO"
 echo "SUMMARY: server=$SSHD changed=1 backup=$BACKUP warnings=$WARNS"

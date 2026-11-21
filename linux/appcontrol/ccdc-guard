@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# ccdc-guard — thin shim that delegates to the Python package.
+# Installed at /usr/local/bin/ccdc-guard via symlink to /opt/ccdc-guard/ccdc-guard.
+exec python3 /opt/ccdc-guard/ccdc_guard "$@"

@@ -34,13 +34,16 @@ echo "STEP 1: Installing auditd package..."
 if command -v apt-get &> /dev/null; then
     apt-get update -y > /dev/null 2>&1
     apt-get install auditd audispd-plugins -y
-    
+
 elif command -v dnf &> /dev/null; then
     dnf install audit audispd-plugins -y
 
 elif command -v yum &> /dev/null; then
     yum install audit audispd-plugins -y
-    
+
+elif command -v apk &> /dev/null; then
+    apk add --no-cache audit
+
 else
     echo "❌ Unsupported package manager. Please install auditd manually."
     exit 1
@@ -50,7 +53,11 @@ echo "✅ auditd package installed."
 # Step 2: Enable the auditd service
 echo "----------------------------------------"
 echo "STEP 2: Enabling auditd service on boot..."
-systemctl enable auditd > /dev/null 2>&1
+if command -v rc-update &>/dev/null; then
+    rc-update add auditd default > /dev/null 2>&1
+else
+    systemctl enable auditd > /dev/null 2>&1
+fi
 echo "✅ auditd service enabled."
 
 # Step 3: Copy the custom rules file
@@ -109,15 +116,25 @@ echo "STEP 7: Restarting the auditd daemon and verifying..."
 if [ "$AUDIT_ENABLED" = "2" ]; then
     echo "⚠️  Skipping restart — rules are immutable. Reboot to apply changes."
 else
-    # Fedora/RHEL may refuse systemctl restart for auditd — fall back to service command
-    if ! systemctl restart auditd 2>/dev/null; then
+    if command -v rc-service &>/dev/null; then
+        rc-service auditd restart 2>/dev/null || true
+    elif ! systemctl restart auditd 2>/dev/null; then
+        # Fedora/RHEL may refuse systemctl restart for auditd — fall back to service command
         echo "systemctl restart failed (common on Fedora), trying 'service auditd restart'..."
         service auditd restart 2>/dev/null || true
     fi
 fi
 sleep 1 # Give the service a moment to stabilize
 
-if systemctl is-active --quiet auditd; then
+auditd_is_active() {
+    if command -v rc-service &>/dev/null; then
+        rc-service auditd status 2>/dev/null | grep -q started
+    else
+        systemctl is-active --quiet auditd
+    fi
+}
+
+if auditd_is_active; then
     RULE_COUNT=$(auditctl -l 2>/dev/null | wc -l)
     echo "✅ Verification successful! The auditd service is active."
     echo "🔎 Rules loaded in kernel: $RULE_COUNT"

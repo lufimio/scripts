@@ -1,0 +1,66 @@
+# Linux
+
+This is the [new] section of the repo dedicated to Linux.
+
+## File Structure
+
+- `first15`: Contains scripts to be run from Kali during the "first 15" section.
+
+- `services`: Contains scripts that secure services organized by the types of systems they run on. 
+
+## Services
+
+Checklist hardening this stuff, please.
+
+- FTP: vsftpd, ProFTPD, Pure-FTPd
+- SSH: sshd, Dropbear, wolfSSH, Apache MINA SSHD, TinySSH
+- Telnet: telnetd, utelnetd
+- SNMP: snmpd, net-snmp
+- SMTP: postfix, exim, OpenSMTPD, Stalwart
+- POP3: dovecot, courier-pop3d
+- IMAP: dovecot
+- Webmail (?)
+- TFTP: tftpd-hpa, atftpd
+- VNC: TigerVNC, TightVNC
+- NFS: rpc.nfsd, rpcbind, lockd
+- SMB: smbd, nmbd, winbindd
+- DNS: dnsmasq, named (BIND)
+- Splunk: Splunkd
+- MySQL: mysqld
+
+## Gameplan
+
+### First 15 (From Kali)
+
+On Saturday, this is what I'll do:
+0. Run: `find . -type f -name '*.sh' -not -path '*/.git/*' -exec sed -i 's/\r$//' {} +`, then `sudo apt install -y yq jq sshpass`
+1. Run Linux user hardening script (rotate creds)
+```bash
+bash harden-users.sh --password 'Licking-Grill-Bright72'
+```
+2. Run Inventory script, send the yml output to Ronald
+```bash
+bash cfk.sh -s @lin audit-inventory
+```
+3. Run any other scripts the Linux team wants me to, and send them the output
+```bash
+bash cfk.sh -s @lin file-perms
+bash cfk.sh -s @lin harden-ssh --apply
+```
+4. Initialize AIDE
+```bash
+bash fim.sh setup # init everything <-- this is ran first (so.. on this stage.. alone)
+bash fim.sh check # run a check for changes
+less "$(ls -t fim/web01/check-*.log | head -1)" # see if the changes are legit
+bash fim.sh refresh web01 --accept-changes # accept changes on only one host
+bash fim.sh refresh --accept-changes # accept all changes if looks good
+```
+5. Run the cracked priv esc tool I found, if we aren't to that point by then--and send output to Linux team
+```bash
+for h in web01 mail01 splunk01 ubuntu01; do
+  bash cfk.sh $h lse -c -i -l 0 -p 5 > lse-$h.txt 2>&1 &
+done; wait
+```
+6. Go through the MSSQL Hardening Checklist, update in the codebase (the `sa` password in docker-compose.yml) to `Debatable-Moustache-Undying51`
+7. Make a backup of the codebase (maybe)
+8. Hunt for vulns in codebase (maybe)

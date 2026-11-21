@@ -58,8 +58,8 @@
 
 ## Audit the audit logs
 ### Successful and unsuccessful attempts to read information from the audit records
--w /var/log/audit/ -p wra -k auditlog
--w /var/audit/ -p wra -k auditlog
+-w /var/log/audit/ -p wa -k auditlog
+-w /var/audit/ -p wa -k auditlog
 
 ## Auditd configuration
 ### Modifications to audit configuration that occur while the audit collection functions are operating
@@ -153,9 +153,11 @@
 ## Special files
 -a always,exit -F arch=b64 -S mknod -S mknodat -k specialfiles
 
-## Mount operations (only attributable) — T1052 Exfiltration Over Physical Medium
--a always,exit -F arch=b64 -S mount -S umount2 -F auid!=-1 -k T1052_Exfil_Physical_Medium
--a always,exit -F arch=b32 -S mount -F auid>=500 -F auid!=4294967295 -k T1052_Exfil_Physical_Medium
+## Mount operations — T1052 Exfiltration Over Physical Medium
+## NOTE: auid>=1000 restricts to interactive users only; systemd/services use lower UIDs.
+## In VM environments the broader auid!=-1 fires hundreds of times/hr on namespace mounts.
+-a always,exit -F arch=b64 -S mount -S umount2 -F auid>=1000 -k T1052_Exfil_Physical_Medium
+-a always,exit -F arch=b32 -S mount -F auid>=1000 -k T1052_Exfil_Physical_Medium
 
 ### NFS mount
 -a always,exit -F path=/sbin/mount.nfs -F perm=x -F auid>=500 -F auid!=4294967295 -k T1078_Valid_Accounts
@@ -169,6 +171,11 @@
 -a always,exit -F arch=b32 -S adjtimex -S settimeofday -S clock_settime -k T1070.006_Timestomp
 ### Local time zone
 -w /etc/localtime -p wa -k T1070.006_Timestomp
+
+## System banner / MOTD — T1491.002 Defacement
+-w /etc/motd -p wa -k T1491.002_Defacement
+-w /etc/issue -p wa -k T1491.002_Defacement
+-w /etc/issue.net -p wa -k T1491.002_Defacement
 
 ## Stunnel — T1573 Encrypted Channel
 -w /usr/sbin/stunnel -p x -k T1573_Encrypted_Channel

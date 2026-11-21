@@ -102,6 +102,7 @@ case "$target" in
         for host in "${hosts[@]}"; do
             os="$(jq -r --arg h "$host" '.[$h].os' <<<"$inventory_json")"
             script="$(script_for_os "$requested" "$os")"
+            [[ "$script" = /* ]] || script="$ROOT/$script"
             [[ -f "$script" && -r "$script" ]] || {
                 echo "Missing script for $host ($os): $script" >&2
                 exit 1
@@ -142,6 +143,7 @@ port="$(jq -r '.port // empty' <<<"$entry")"
     exit 1
 }
 script="$(script_for_os "$requested" "$os")"
+[[ "$script" = /* ]] || script="$ROOT/$script"
 [[ -f "$script" && -r "$script" ]] || { echo "Cannot read $script" >&2; exit 1; }
 
 # Quote arguments for a remote POSIX shell / PowerShell.
